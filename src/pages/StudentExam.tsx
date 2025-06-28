@@ -3,7 +3,8 @@ import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Camera, CameraOff, Clock, BookOpen } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Camera, CameraOff, Clock, BookOpen, AlertTriangle, CheckCircle } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import BehaviorMonitor from "@/components/BehaviorMonitor";
 import { behaviorAnalyzer, CheatingPattern } from "@/utils/formalVerification";
@@ -11,8 +12,11 @@ import { behaviorAnalyzer, CheatingPattern } from "@/utils/formalVerification";
 const StudentExam = () => {
   const [cameraEnabled, setCameraEnabled] = useState(false);
   const [examStarted, setExamStarted] = useState(false);
-  const [timeRemaining, setTimeRemaining] = useState(3600); // 1 hour in seconds
+  const [examSubmitted, setExamSubmitted] = useState(false);
+  const [timeRemaining, setTimeRemaining] = useState(7200); // 2 hours in seconds
+  const [examStartTime, setExamStartTime] = useState<Date | null>(null);
   const [studentInfo, setStudentInfo] = useState({ id: '', subject: '' });
+  const [answers, setAnswers] = useState<{ [key: string]: string }>({});
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
@@ -51,32 +55,38 @@ const StudentExam = () => {
   // Monitor tab visibility
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (document.hidden && examStarted) {
+      if (document.hidden && examStarted && !examSubmitted) {
         behaviorAnalyzer.addTransition({ tabStatus: 'switched' }, 'tab_switch_detected');
         toast({
           title: "Tab Switch Detected",
           description: "Please stay focused on the exam",
           variant: "destructive",
         });
-      } else if (!document.hidden && examStarted) {
+      } else if (!document.hidden && examStarted && !examSubmitted) {
         behaviorAnalyzer.addTransition({ tabStatus: 'focused' }, 'tab_focus_restored');
       }
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [examStarted]);
+  }, [examStarted, examSubmitted]);
 
   // Timer countdown
   useEffect(() => {
     let timer: NodeJS.Timeout;
-    if (examStarted && timeRemaining > 0) {
+    if (examStarted && timeRemaining > 0 && !examSubmitted) {
       timer = setInterval(() => {
-        setTimeRemaining(prev => prev - 1);
+        setTimeRemaining(prev => {
+          if (prev <= 1) {
+            handleAutoSubmit();
+            return 0;
+          }
+          return prev - 1;
+        });
       }, 1000);
     }
     return () => clearInterval(timer);
-  }, [examStarted, timeRemaining]);
+  }, [examStarted, timeRemaining, examSubmitted]);
 
   const formatTime = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);
@@ -88,6 +98,7 @@ const StudentExam = () => {
   const startExam = () => {
     if (cameraEnabled) {
       setExamStarted(true);
+      setExamStartTime(new Date());
       // Initialize behavioral state
       behaviorAnalyzer.addTransition({ 
         gazeDirection: 'forward', 
@@ -106,6 +117,46 @@ const StudentExam = () => {
         variant: "destructive",
       });
     }
+  };
+
+  const canSubmitEarly = () => {
+    if (!examStartTime) return false;
+    const elapsed = (Date.now() - examStartTime.getTime()) / 1000 / 60; // minutes
+    return elapsed >= 30; // Allow submission after 30 minutes
+  };
+
+  const handleSubmitExam = () => {
+    if (!canSubmitEarly()) {
+      toast({
+        title: "Cannot Submit Yet",
+        description: "You can submit the exam after 30 minutes from start time",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setExamSubmitted(true);
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+    }
+    
+    toast({
+      title: "Exam Submitted",
+      description: "Your exam has been submitted successfully",
+    });
+  };
+
+  const handleAutoSubmit = () => {
+    setExamSubmitted(true);
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+    }
+    
+    toast({
+      title: "Time's Up!",
+      description: "Your exam has been automatically submitted",
+      variant: "destructive",
+    });
   };
 
   const handleViolationDetected = (pattern: CheatingPattern) => {
@@ -128,6 +179,45 @@ const StudentExam = () => {
     return subjects[code] || code;
   };
 
+  const getElapsedTime = () => {
+    if (!examStartTime) return "00:00";
+    const elapsed = Math.floor((Date.now() - examStartTime.getTime()) / 1000 / 60);
+    const hours = Math.floor(elapsed / 60);
+    const minutes = elapsed % 60;
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+  };
+
+  if (examSubmitted) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+        <Card className="max-w-md w-full">
+          <CardHeader className="text-center">
+            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <CheckCircle className="h-8 w-8 text-green-600" />
+            </div>
+            <CardTitle className="text-green-600">Exam Submitted Successfully</CardTitle>
+            <CardDescription>
+              Your {getSubjectName(studentInfo.subject)} exam has been submitted
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="text-center space-y-4">
+            <div className="p-4 bg-secondary/20 rounded-lg">
+              <p className="text-sm text-muted-foreground">Student ID</p>
+              <p className="font-semibold">{studentInfo.id}</p>
+            </div>
+            <div className="p-4 bg-secondary/20 rounded-lg">
+              <p className="text-sm text-muted-foreground">Time Taken</p>
+              <p className="font-semibold">{getElapsedTime()}</p>
+            </div>
+            <Button onClick={() => window.location.href = '/'} className="w-full">
+              Return to Home
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background p-4">
       {/* Header */}
@@ -135,7 +225,7 @@ const StudentExam = () => {
         <div>
           <h1 className="text-2xl font-bold">{getSubjectName(studentInfo.subject)} Exam</h1>
           <p className="text-muted-foreground">
-            Student: {studentInfo.id} • Duration: 60 minutes
+            Student: {studentInfo.id} • Duration: 120 minutes
           </p>
         </div>
         <div className="flex items-center space-x-4">
@@ -149,6 +239,17 @@ const StudentExam = () => {
           </Badge>
         </div>
       </div>
+
+      {/* Early submission warning */}
+      {examStarted && !canSubmitEarly() && (
+        <Alert className="mb-6">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertDescription>
+            You can submit the exam after 30 minutes from start time. 
+            Time elapsed: {getElapsedTime()}
+          </AlertDescription>
+        </Alert>
+      )}
 
       <div className="grid lg:grid-cols-4 gap-6">
         {/* Main Exam Area */}
@@ -171,12 +272,13 @@ const StudentExam = () => {
                       You will be monitored throughout the exam using advanced behavioral analysis.
                     </p>
                     <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg max-w-md mx-auto">
-                      <h4 className="font-semibold text-blue-800 mb-2">Monitoring Information</h4>
-                      <ul className="text-sm text-blue-700 space-y-1">
+                      <h4 className="font-semibold text-blue-800 mb-2">Important Instructions</h4>
+                      <ul className="text-sm text-blue-700 space-y-1 text-left">
                         <li>• Eye movement and gaze tracking</li>
                         <li>• Browser tab activity monitoring</li>
                         <li>• Audio level analysis</li>
-                        <li>• Formal verification of behavior patterns</li>
+                        <li>• Early submission allowed after 30 minutes</li>
+                        <li>• Auto-submit when time expires</li>
                       </ul>
                     </div>
                     <div className="flex justify-center space-x-4">
@@ -285,12 +387,23 @@ const StudentExam = () => {
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm">Exam Controls</CardTitle>
               </CardHeader>
-              <CardContent>
-                <Button variant="outline" className="w-full mb-2" size="sm">
-                  Submit Exam
+              <CardContent className="space-y-3">
+                <div className="text-xs text-center text-muted-foreground">
+                  <p>Time Elapsed: {getElapsedTime()}</p>
+                </div>
+                <Button 
+                  onClick={handleSubmitExam}
+                  disabled={!canSubmitEarly()}
+                  className="w-full" 
+                  size="sm"
+                >
+                  {canSubmitEarly() ? "Submit Exam" : `Submit in ${Math.max(0, 30 - Math.floor((Date.now() - (examStartTime?.getTime() || Date.now())) / 1000 / 60))} min`}
                 </Button>
                 <p className="text-xs text-muted-foreground text-center">
-                  Make sure to review your answers before submitting
+                  {canSubmitEarly() 
+                    ? "Review your answers before submitting" 
+                    : "Early submission available after 30 minutes"
+                  }
                 </p>
               </CardContent>
             </Card>
