@@ -3,20 +3,25 @@ import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Camera, CameraOff, Eye, Monitor, Clock } from "lucide-react";
+import { Camera, CameraOff, Clock, BookOpen } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import BehaviorMonitor from "@/components/BehaviorMonitor";
+import { behaviorAnalyzer, CheatingPattern } from "@/utils/formalVerification";
 
 const StudentExam = () => {
   const [cameraEnabled, setCameraEnabled] = useState(false);
   const [examStarted, setExamStarted] = useState(false);
   const [timeRemaining, setTimeRemaining] = useState(3600); // 1 hour in seconds
-  const [behaviorFlags, setBehaviorFlags] = useState({
-    gazeShift: 0,
-    tabSwitch: 0,
-    multiplePeople: false,
-  });
+  const [studentInfo, setStudentInfo] = useState({ id: '', subject: '' });
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+
+  // Load student info from localStorage
+  useEffect(() => {
+    const studentId = localStorage.getItem('studentId') || '';
+    const selectedSubject = localStorage.getItem('selectedSubject') || '';
+    setStudentInfo({ id: studentId, subject: selectedSubject });
+  }, []);
 
   // Initialize camera
   const initializeCamera = async () => {
@@ -47,15 +52,14 @@ const StudentExam = () => {
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.hidden && examStarted) {
-        setBehaviorFlags(prev => ({
-          ...prev,
-          tabSwitch: prev.tabSwitch + 1
-        }));
+        behaviorAnalyzer.addTransition({ tabStatus: 'switched' }, 'tab_switch_detected');
         toast({
           title: "Tab Switch Detected",
           description: "Please stay focused on the exam",
           variant: "destructive",
         });
+      } else if (!document.hidden && examStarted) {
+        behaviorAnalyzer.addTransition({ tabStatus: 'focused' }, 'tab_focus_restored');
       }
     };
 
@@ -84,6 +88,13 @@ const StudentExam = () => {
   const startExam = () => {
     if (cameraEnabled) {
       setExamStarted(true);
+      // Initialize behavioral state
+      behaviorAnalyzer.addTransition({ 
+        gazeDirection: 'forward', 
+        tabStatus: 'focused', 
+        audioLevel: 'normal' 
+      }, 'exam_started');
+      
       toast({
         title: "Exam Started",
         description: "You are now being monitored. Good luck!",
@@ -97,11 +108,24 @@ const StudentExam = () => {
     }
   };
 
-  const simulateGazeShift = () => {
-    setBehaviorFlags(prev => ({
-      ...prev,
-      gazeShift: prev.gazeShift + 1
-    }));
+  const handleViolationDetected = (pattern: CheatingPattern) => {
+    toast({
+      title: `Violation Detected: ${pattern.name}`,
+      description: pattern.description,
+      variant: "destructive",
+    });
+  };
+
+  const getSubjectName = (code: string) => {
+    const subjects: { [key: string]: string } = {
+      'MATH101': 'Calculus I',
+      'PHY101': 'Physics I',
+      'CS101': 'Programming Fundamentals',
+      'ENG101': 'English Composition',
+      'STAT101': 'Statistics',
+      'CHEM101': 'General Chemistry'
+    };
+    return subjects[code] || code;
   };
 
   return (
@@ -109,8 +133,10 @@ const StudentExam = () => {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold">Mathematics Final Exam</h1>
-          <p className="text-muted-foreground">Spring 2024 • Duration: 60 minutes</p>
+          <h1 className="text-2xl font-bold">{getSubjectName(studentInfo.subject)} Exam</h1>
+          <p className="text-muted-foreground">
+            Student: {studentInfo.id} • Duration: 60 minutes
+          </p>
         </div>
         <div className="flex items-center space-x-4">
           <Badge variant={examStarted ? "default" : "secondary"} className="px-3 py-1">
@@ -129,7 +155,10 @@ const StudentExam = () => {
         <div className="lg:col-span-3">
           <Card>
             <CardHeader>
-              <CardTitle>Exam Questions</CardTitle>
+              <CardTitle className="flex items-center space-x-2">
+                <BookOpen className="h-5 w-5" />
+                <span>Exam Questions</span>
+              </CardTitle>
               <CardDescription>Answer all questions to the best of your ability</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -139,8 +168,17 @@ const StudentExam = () => {
                     <h3 className="text-lg font-semibold">Ready to Begin?</h3>
                     <p className="text-muted-foreground max-w-md mx-auto">
                       Make sure your camera is enabled and you're in a quiet environment. 
-                      You will be monitored throughout the exam.
+                      You will be monitored throughout the exam using advanced behavioral analysis.
                     </p>
+                    <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg max-w-md mx-auto">
+                      <h4 className="font-semibold text-blue-800 mb-2">Monitoring Information</h4>
+                      <ul className="text-sm text-blue-700 space-y-1">
+                        <li>• Eye movement and gaze tracking</li>
+                        <li>• Browser tab activity monitoring</li>
+                        <li>• Audio level analysis</li>
+                        <li>• Formal verification of behavior patterns</li>
+                      </ul>
+                    </div>
                     <div className="flex justify-center space-x-4">
                       <Button onClick={initializeCamera} disabled={cameraEnabled}>
                         {cameraEnabled ? "Camera Ready" : "Enable Camera"}
@@ -156,7 +194,12 @@ const StudentExam = () => {
                   <div className="p-4 bg-secondary/20 rounded-lg">
                     <h4 className="font-semibold mb-2">Question 1 (25 points)</h4>
                     <p className="mb-4">
-                      Solve the quadratic equation: x² - 5x + 6 = 0
+                      {studentInfo.subject === 'MATH101' ? 
+                        'Solve the quadratic equation: x² - 5x + 6 = 0' :
+                        studentInfo.subject === 'CS101' ?
+                        'Write a function to implement binary search algorithm' :
+                        'Analyze the given problem and provide a detailed solution'
+                      }
                     </p>
                     <textarea 
                       className="w-full h-24 p-3 border rounded-md resize-none"
@@ -167,7 +210,12 @@ const StudentExam = () => {
                   <div className="p-4 bg-secondary/20 rounded-lg">
                     <h4 className="font-semibold mb-2">Question 2 (25 points)</h4>
                     <p className="mb-4">
-                      Find the derivative of f(x) = 3x³ - 2x² + x - 5
+                      {studentInfo.subject === 'MATH101' ? 
+                        'Find the derivative of f(x) = 3x³ - 2x² + x - 5' :
+                        studentInfo.subject === 'CS101' ?
+                        'Explain the time complexity of merge sort algorithm' :
+                        'Discuss the key concepts and their applications'
+                      }
                     </p>
                     <textarea 
                       className="w-full h-24 p-3 border rounded-md resize-none"
@@ -178,11 +226,16 @@ const StudentExam = () => {
                   <div className="p-4 bg-secondary/20 rounded-lg">
                     <h4 className="font-semibold mb-2">Question 3 (50 points)</h4>
                     <p className="mb-4">
-                      Prove that the sum of the first n natural numbers is n(n+1)/2
+                      {studentInfo.subject === 'MATH101' ? 
+                        'Prove that the sum of the first n natural numbers is n(n+1)/2' :
+                        studentInfo.subject === 'CS101' ?
+                        'Design and implement a complete solution for the given problem scenario' :
+                        'Provide a comprehensive analysis with detailed explanations and examples'
+                      }
                     </p>
                     <textarea 
                       className="w-full h-32 p-3 border rounded-md resize-none"
-                      placeholder="Enter your proof here..."
+                      placeholder="Enter your solution here..."
                     />
                   </div>
                 </div>
@@ -221,45 +274,10 @@ const StudentExam = () => {
           </Card>
 
           {/* Behavior Monitoring */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm">Behavior Status</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <Eye className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm">Gaze Shifts</span>
-                </div>
-                <Badge variant={behaviorFlags.gazeShift > 3 ? "destructive" : "secondary"}>
-                  {behaviorFlags.gazeShift}
-                </Badge>
-              </div>
-              
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <Monitor className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm">Tab Switches</span>
-                </div>
-                <Badge variant={behaviorFlags.tabSwitch > 2 ? "destructive" : "secondary"}>
-                  {behaviorFlags.tabSwitch}
-                </Badge>
-              </div>
-
-              {examStarted && (
-                <div className="pt-2">
-                  <Button 
-                    size="sm" 
-                    variant="outline" 
-                    onClick={simulateGazeShift}
-                    className="w-full text-xs"
-                  >
-                    Simulate Gaze Detection
-                  </Button>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <BehaviorMonitor 
+            examStarted={examStarted} 
+            onViolationDetected={handleViolationDetected}
+          />
 
           {/* Exam Controls */}
           {examStarted && (
